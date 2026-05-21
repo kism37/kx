@@ -244,4 +244,4 @@ For *semantic* bug classes (not pattern signatures), add detector functions to `
 
 ## Author
 
-Built by [kism3t](https://github.com/kism37.
+Built by [kism3t](https://github.com/kism37).
