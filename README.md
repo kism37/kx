@@ -5,7 +5,7 @@
 
 kx reads each JavaScript file from a target and finds bug **classes**, not just patterns.
 
-It's not another secret scanner. It builds a structural model of each JS bundle -- schemas, mutations, network calls, session refs, sinks, taint paths -- and reasons about whether the behaviour represents a real vulnerability. It works on production-minified code where every variable is a one-character alias, and it recovers original TypeScript sources from sourcemaps when they're shipped.
+It's not another secret scanner. It builds a structural model of each JS bundle, schemas, mutations, network calls, session refs, sinks, taint paths, and reasons about whether the behaviour represents a real vulnerability. It works on production-minified code where every variable is a one-character alias, and it recovers original TypeScript sources from sourcemaps when they're shipped.
 
 ---
 
@@ -26,11 +26,11 @@ Secrets, hardcoded URLs, dangerous sinks (`eval`, `innerHTML`, `postMessage` wit
 
 ### Identification by usage shape, not name
 
-Production bundles strip everything. kx doesn't grep for `"useForm"` -- it identifies a form hook by detecting that something returns an object destructured into `{handleSubmit, control, ...}`. Same for schemas, mutations, sessions, resolvers. Works on react-hook-form, vee-validate, svelte-forms-lib, custom hooks, and anything else that follows these conventions.
+Production bundles strip everything. kx doesn't grep for `"useForm"`, it identifies a form hook by detecting that something returns an object destructured into `{handleSubmit, control, ...}`. Same for schemas, mutations, sessions, resolvers. Works on react-hook-form, vee-validate, svelte-forms-lib, custom hooks, and anything else that follows these conventions.
 
 ### Coverage you don't have to click for
 
-- **Chunk-manifest resolution.** kx parses Vite, Webpack, Rollup, and Next.js entry bundles for their chunk maps and force-fetches every lazy-loaded route. The admin panel chunk that only loads when you click "Settings -> Account" -- kx pulls it on first scan.
+- **Chunk-manifest resolution.** kx parses Vite, Webpack, Rollup, and Next.js entry bundles for their chunk maps and force-fetches every lazy-loaded route. The admin panel chunk that only loads when you click "Settings -> Account", kx pulls it on first scan.
 - **Source-map recovery.** Every `.js.map` is fetched, parsed, and original TypeScript sources are reconstructed and re-scanned. Third-party noise (react, lodash, polyfills) is filtered. Findings on recovered files are tagged `[src] path/to/Original.ts`.
 
 ### Optional LLM verification
@@ -97,7 +97,7 @@ kx -u https://app.target.com \
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-u`, `--url` | required | Target URL |
-| `--auth` | -- | Auth headers: `"Cookie: x=y;; Header: value"` |
+| `--auth` | - | Auth headers: `"Cookie: x=y;; Header: value"` |
 | `--scope` | same origin | Comma-separated allowed domains |
 | `--depth` | 5 | Max JS recursion depth |
 | `--concurrency` | 8 | Parallel HTTP requests |
@@ -128,12 +128,12 @@ kx -u https://app.target.com \
 
 ## Output
 
-- **Terminal** -- Severity-coloured table, then evidence panels for each high/critical semantic finding showing the schema field, refine rule, mutation payload, and origin chain that triggered it.
-- **JSON** -- Full findings with `note` and `evidence` arrays preserved.
-- **Markdown** -- Paste-ready for writeups, with a dedicated "Semantic findings -- evidence chains" section detailing every high/critical finding.
-- **Per-file Markdown reports** (`reports/<host>/<filename>.md`) -- Hunter's notes per JS file: summary, schema, mutations, findings.
-- **Burp sitemap** -- Discovered endpoints pushed via REST API.
-- **hunt_journal.md** -- Auto-appended summary for session tracking.
+- **Terminal** - Severity-coloured table, then evidence panels for each high/critical semantic finding showing the schema field, refine rule, mutation payload, and origin chain that triggered it.
+- **JSON** - Full findings with `note` and `evidence` arrays preserved.
+- **Markdown** - Paste-ready for writeups, with a dedicated "Semantic findings - evidence chains" section detailing every high/critical finding.
+- **Per-file Markdown reports** (`reports/<host>/<filename>.md`) - Hunter's notes per JS file: summary, schema, mutations, findings.
+- **Burp sitemap** - Discovered endpoints pushed via REST API.
+- **hunt_journal.md** - Auto-appended summary for session tracking.
 
 Findings reconstructed from sourcemaps render as `[src] src/api/UserService.ts` instead of a mangled bundle URL.
 
@@ -159,9 +159,9 @@ kx ► history                 # show prior scans of this target from diff DB
 kx ► help                    # full command reference
 ```
 
-Triage state survives across scans -- finding fingerprints match by content, not ID, so re-runs preserve your marks even when the bundle layout shifts.
+Triage state survives across scans - finding fingerprints match by content, not ID, so re-runs preserve your marks even when the bundle layout shifts.
 
-The `curl <id>` command tailors its hint to the finding category -- admin paths get "expect 302 -> /login if authz works", IDOR gets "change the ID to another tenant", SSRF gets the cloud-metadata trick, etc.
+The `curl <id>` command tailors its hint to the finding category - admin paths get "expect 302 -> /login if authz works", IDOR gets "change the ID to another tenant", SSRF gets the cloud-metadata trick, etc.
 
 ---
 
@@ -173,7 +173,7 @@ The `curl <id>` command tailors its hint to the finding category -- admin paths 
 - The match string in a highlighted code box
 - Source file + line number
 - Evidence chain from semantic detectors (schema field, mutation call, spread member, etc.)
-- **Suggested action box** -- category-specific verification instructions
+- **Suggested action box** - category-specific verification instructions
 - Auto-triage rationale (why it was classified)
 
 Findings get auto-classified by `auto_triage.py`: React/Next/Redux framework noise -> `fp`, semantic detector hits -> `real`, everything else -> `verify`. You can re-classify in the REPL with `triage <id> hit/fp/verify`.
@@ -230,10 +230,10 @@ For *semantic* bug classes (not pattern signatures), add detector functions to `
 
 ## Tips for bug bounty
 
-- Always run **authenticated** (`--auth "Cookie: ..."`) -- post-login bundles contain different schemas, mutations, and admin chunks.
+- Always run **authenticated** (`--auth "Cookie: ..."`) - post-login bundles contain different schemas, mutations, and admin chunks.
 - Let kx do the work: it now fetches lazy routes via manifest parsing and reconstructs original sources from maps. You don't have to click through.
-- Pair with `--diff` weekly on active programs -- new deploys = new attack surface, often new bugs introduced.
-- `--verify` is worth the few cents per scan when triaging -- it culls FPs and gives you ready-to-paste PoCs.
+- Pair with `--diff` weekly on active programs - new deploys = new attack surface, often new bugs introduced.
+- `--verify` is worth the few cents per scan when triaging - it culls FPs and gives you ready-to-paste PoCs.
 - Use `--runtime` to capture dynamically constructed URLs static analysis can't see.
 - Pipe `--burp` to push every endpoint discovered (including ones from recovered source) directly into Burp.
 - For targets with broken SSL chains (banks, gov portals), pass `--insecure` -- the diagnostic will tell you when this is needed.
@@ -243,7 +243,7 @@ For *semantic* bug classes (not pattern signatures), add detector functions to `
 
 ## License
 
-[MIT](LICENSE) -- © 2026 kism37.
+[MIT](LICENSE) - © 2026 kism37.
 
 ## Author
 
