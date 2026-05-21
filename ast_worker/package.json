@@ -1,0 +1,13 @@
+{
+  "name": "kx-ast-worker",
+  "version": "1.0.0",
+  "description": "kx AST analysis worker",
+  "main": "analyze.js",
+  "scripts": {
+    "analyze": "node analyze.js"
+  },
+  "dependencies": {
+    "acorn": "^8.11.3",
+    "acorn-walk": "^8.3.2"
+  }
+}

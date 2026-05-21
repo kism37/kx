@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+wheels/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.venv/
+venv/
+env/
+
+# Node (AST worker dependencies)
+node_modules/
+package-lock.json.bak
+
+# kx scan output — never commit findings from real targets
+reports/
+*.kx.json
+*.kx.html
+*.kx.md
+
+# Diff state DB
+*.db
+*.db-journal
+
+# REPL session state
+.kx_session.json
+.wraith_session.json
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# OS / runtime junk
+*.log
+.env
+.env.*
+!.env.example
+
+# Test artifacts the human might have laying around
+test_samples/
+test_outputs/
+*.test.html

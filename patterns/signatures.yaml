@@ -1,0 +1,333 @@
+secrets:
+  - name: AWS Access Key
+    pattern: 'AKIA[0-9A-Z]{16}'
+    severity: critical
+    context: aws
+
+  - name: AWS Secret Key
+    pattern: '(?i)aws.{0,20}secret.{0,20}["\'][A-Za-z0-9/+=]{40}["\']'
+    severity: critical
+    context: aws
+
+  - name: Google API Key
+    pattern: "AIza[0-9A-Za-z\\-_]{35}"
+    severity: high
+    context: gcp
+
+  - name: Firebase Config apiKey
+    pattern: 'AIza[0-9A-Za-z\-_]{35}'
+    severity: high
+    context: firebase
+
+  - name: Firebase projectId
+    pattern: '"projectId"\s*:\s*"[a-z0-9\-]+"'
+    severity: low
+    context: firebase
+
+  - name: Stripe Secret Key
+    pattern: 'sk_live_[0-9a-zA-Z]{24,}'
+    severity: critical
+    context: payment
+
+  - name: Stripe Test Secret Key
+    pattern: 'sk_test_[0-9a-zA-Z]{24,}'
+    severity: medium
+    context: payment
+
+  - name: Stripe Publishable Key
+    pattern: 'pk_live_[0-9a-zA-Z]{24,}'
+    severity: medium
+    context: payment
+
+  - name: JWT Token
+    pattern: 'eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}'
+    severity: high
+    context: auth
+
+  - name: Bearer Token (hardcoded)
+    pattern: '(?i)["\`]Bearer\s+[A-Za-z0-9\-_=+/]{20,}["\`]'
+    severity: high
+    context: auth
+
+  - name: GitHub Personal Access Token
+    pattern: 'ghp_[A-Za-z0-9]{36}'
+    severity: critical
+    context: vcs
+
+  - name: GitHub Fine-Grained Token
+    pattern: 'github_pat_[A-Za-z0-9_]{82}'
+    severity: critical
+    context: vcs
+
+  - name: Slack Bot Token
+    pattern: 'xox[baprs]-[A-Za-z0-9\-]{10,}'
+    severity: high
+    context: slack
+
+  - name: Slack Webhook
+    pattern: 'hooks\.slack\.com/services/[A-Za-z0-9/]+'
+    severity: high
+    context: slack
+
+  - name: Twilio Account SID
+    pattern: 'AC[0-9a-fA-F]{32}'
+    severity: high
+    context: twilio
+
+  - name: Twilio Auth Token
+    pattern: '(?i)twilio.{0,20}["\'][0-9a-fA-F]{32}["\']'
+    severity: critical
+    context: twilio
+
+  - name: SendGrid API Key
+    pattern: 'SG\.[A-Za-z0-9\-_]{22,}\.[A-Za-z0-9\-_]{43}'
+    severity: high
+    context: email
+
+  - name: Mailchimp API Key
+    pattern: '[0-9a-f]{32}-us[0-9]{1,2}'
+    severity: medium
+    context: email
+
+  - name: Private Key PEM
+    pattern: '-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----'
+    severity: critical
+    context: crypto
+
+  - name: Hardcoded Password
+    pattern: '(?i)(password|passwd|pwd)\s*[=:]\s*["\`][^"\'`]{6,}["\`]'
+    severity: high
+    context: credentials
+
+  - name: Basic Auth in URL
+    pattern: 'https?://[A-Za-z0-9_\-]+:[A-Za-z0-9_\-]+@'
+    severity: critical
+    context: credentials
+
+  - name: Azure Storage Connection String
+    pattern: 'DefaultEndpointsProtocol=https;AccountName=[^;]+;AccountKey=[A-Za-z0-9+/=]{88}'
+    severity: critical
+    context: azure
+
+  - name: Azure SAS Token
+    pattern: 'sig=[A-Za-z0-9%+/=]{43,}'
+    severity: high
+    context: azure
+
+  - name: GCP Service Account JSON
+    pattern: '"type"\s*:\s*"service_account"'
+    severity: critical
+    context: gcp
+
+  - name: Mapbox Token
+    pattern: 'pk\.[A-Za-z0-9\-_]{60,}'
+    severity: medium
+    context: maps
+
+  - name: Algolia API Key
+    pattern: '(?i)algolia.{0,30}["\'][A-Za-z0-9]{32}["\']'
+    severity: medium
+    context: search
+
+  - name: HubSpot API Key
+    pattern: '(?i)hubspot.{0,20}["\'][A-Za-z0-9\-]{36}["\']'
+    severity: high
+    context: crm
+
+  - name: Supabase Service Role Key
+    pattern: 'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+'
+    severity: high
+    context: supabase
+
+  - name: Supabase URL
+    pattern: 'https://[a-zA-Z0-9]+\.supabase\.co'
+    severity: medium
+    context: supabase
+
+  - name: Intercom App ID
+    pattern: '(?i)intercom.{0,20}app_id.{0,10}["\'][A-Za-z0-9]{8,}["\']'
+    severity: low
+    context: analytics
+
+  - name: Sentry DSN
+    pattern: 'https://[0-9a-f]{32}@[a-z0-9.]+/[0-9]+'
+    severity: medium
+    context: monitoring
+
+  - name: NPM Token
+    pattern: 'npm_[A-Za-z0-9]{36}'
+    severity: high
+    context: vcs
+
+  - name: Cloudinary URL
+    pattern: 'cloudinary://[0-9]+:[A-Za-z0-9_\-]+@'
+    severity: high
+    context: cloud_storage
+
+endpoints:
+  - name: GraphQL Endpoint
+    pattern: '(?i)["\`](/graphql|/gql|/api/graphql|/query)["` /]'
+    severity: high
+    context: graphql
+
+  - name: REST API v-path
+    pattern: '(?i)["\`]/api/v[0-9]+/[a-zA-Z0-9/_\-]+'
+    severity: medium
+    context: api
+
+  - name: Admin Panel Path
+    pattern: '(?i)["\`](/admin|/dashboard|/management|/console|/control[-_]panel|/backstage|/superuser|/ops)["\`/]'
+    severity: high
+    context: admin
+
+  - name: WebSocket URL
+    pattern: 'wss?://[a-zA-Z0-9\-_.]+[^\s"\`]+'
+    severity: medium
+    context: websocket
+
+  - name: S3 Bucket URL
+    pattern: '(?i)(s3[.-][a-zA-Z0-9\-]+\.amazonaws\.com|[a-zA-Z0-9\-]+\.s3\.amazonaws\.com)'
+    severity: high
+    context: cloud_storage
+
+  - name: Internal/Dev Subdomain
+    pattern: '(?i)https?://(internal|dev|staging|preprod|uat|test|qa|sandbox|local)\.[a-zA-Z0-9\-.]+'
+    severity: high
+    context: internal
+
+  - name: SSRF-prone parameter
+    pattern: '(?i)[?&](url|redirect|next|return|dest|destination|uri|endpoint|path|host|site|target|proxy|redir)='
+    severity: high
+    context: ssrf
+
+  - name: Open Redirect Sink
+    pattern: '(?i)(window\.location|location\.href|location\.replace|location\.assign)\s*=\s*[^;]*\+'
+    severity: medium
+    context: open_redirect
+
+  - name: Fetch with user-controlled URL
+    pattern: 'fetch\s*\(\s*(params|query|req|request|input|url|href)'
+    severity: medium
+    context: ssrf
+
+  - name: Hidden Debug Endpoint
+    pattern: '(?i)["\`](/debug|/trace|/actuator|/metrics|/health|/info|/env|/__debug__|/phpinfo)["\`]'
+    severity: high
+    context: debug_endpoint
+
+  - name: Swagger/OpenAPI UI
+    pattern: '(?i)["\`](/swagger[-_]?ui|/api[-_]?docs|/openapi|/redoc)["\`]'
+    severity: medium
+    context: api_docs
+
+  - name: Internal IP Address
+    pattern: '(?i)["\`]https?://(10\.\d+\.\d+\.\d+|172\.(1[6-9]|2[0-9]|3[01])\.\d+\.\d+|192\.168\.\d+\.\d+)'
+    severity: high
+    context: internal
+
+sinks:
+  - name: eval()
+    pattern: '\beval\s*\('
+    severity: high
+    context: xss
+
+  - name: innerHTML assignment
+    pattern: '\.innerHTML\s*='
+    severity: medium
+    context: xss
+
+  - name: outerHTML assignment
+    pattern: '\.outerHTML\s*='
+    severity: medium
+    context: xss
+
+  - name: document.write()
+    pattern: 'document\.write\s*\('
+    severity: medium
+    context: xss
+
+  - name: insertAdjacentHTML
+    pattern: '\.insertAdjacentHTML\s*\('
+    severity: medium
+    context: xss
+
+  - name: dangerouslySetInnerHTML (React)
+    pattern: 'dangerouslySetInnerHTML\s*=\s*\{'
+    severity: high
+    context: xss
+
+  - name: v-html directive (Vue)
+    pattern: 'v-html\s*='
+    severity: high
+    context: xss
+
+  - name: setTimeout with string
+    pattern: 'setTimeout\s*\(\s*["\`]'
+    severity: high
+    context: xss
+
+  - name: setInterval with string
+    pattern: 'setInterval\s*\(\s*["\`]'
+    severity: high
+    context: xss
+
+  - name: new Function()
+    pattern: 'new\s+Function\s*\('
+    severity: high
+    context: xss
+
+  - name: Prototype Pollution via assign
+    pattern: 'Object\.assign\s*\(\s*[^,]+,\s*[^)]*(?:req|user|body|params|query|input)'
+    severity: high
+    context: prototype_pollution
+
+  - name: Prototype Pollution via merge
+    pattern: '(?i)(merge|extend|deepmerge|_.merge)\s*\([^,]+,\s*[^)]*(?:req|user|body|input)'
+    severity: high
+    context: prototype_pollution
+
+  - name: postMessage without origin check
+    pattern: 'window\.addEventListener\s*\(\s*["\`]message["\`]'
+    severity: medium
+    context: postmessage
+
+debug:
+  - name: Debug Flag Enabled
+    pattern: '(?i)(debug|verbose|isDev|isDebug|DEV_MODE)\s*[=:]\s*true'
+    severity: low
+    context: debug
+
+  - name: Source Map Reference
+    pattern: '//[#@]\s*sourceMappingURL=(?!data:)'
+    severity: medium
+    context: source_map
+
+  - name: TODO/FIXME near security keyword
+    pattern: '(?i)//\s*(todo|fixme|hack|xxx).{0,80}(auth|secret|token|password|key|admin|vuln|bypass)'
+    severity: medium
+    context: comment
+
+  - name: Sensitive console.log
+    pattern: '(?i)console\.(log|debug|info|warn)\s*\([^)]*?(token|key|secret|password|auth|jwt|bearer)'
+    severity: medium
+    context: debug
+
+  - name: process.env exposure
+    pattern: 'process\.env\.[A-Z][A-Z0-9_]{4,}'
+    severity: medium
+    context: env_var
+
+  - name: Hard-coded localhost/127.0.0.1
+    pattern: '(?i)["\`](https?://)?(localhost|127\.0\.0\.1)(:\d+)?[/"\`]'
+    severity: low
+    context: debug
+
+  - name: Disabled SSL verification
+    pattern: '(?i)(rejectUnauthorized|verify)\s*[=:]\s*false'
+    severity: high
+    context: ssl
+
+  - name: Exposed stack trace
+    pattern: '(?i)(stack|stacktrace|err\.stack|error\.stack)\s*[=:,]'
+    severity: low
+    context: debug
