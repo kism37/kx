@@ -43,7 +43,7 @@ git clone https://github.com/kism3t/kx
 cd kx && ./install.sh
 ```
 
-Installer pins `kx` to `/usr/local/bin/kx` if writable, else `~/.local/bin/kx`. Removes any legacy `wraith` symlinks from prior installs.
+Installer pins `kx` to `/usr/local/bin/kx` if writable, else `~/.local/bin/kx`.
 
 Manual:
 ```bash
@@ -240,8 +240,8 @@ For *semantic* bug classes (not pattern signatures), add detector functions to `
 
 ## License
 
-[MIT](LICENSE) -- © 2026 kism3t.
+[MIT](LICENSE) -- © 2026 kism37.
 
 ## Author
 
-Built by [kism3t](https://github.com/kism3t). Part of a small personal tool family alongside **[klaxon](https://github.com/kism3t/klaxon)** (defensive ransomware CTI).
+Built by [kism3t](https://github.com/kism37.
