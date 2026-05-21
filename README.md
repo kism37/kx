@@ -1,4 +1,4 @@
-# kx -- Semantic JS recon
+# kx - Semantic JS recon
 ![tests](https://github.com/kism37/kx/actions/workflows/tests.yml/badge.svg)
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![python](https://img.shields.io/badge/python-3.10+-blue)
