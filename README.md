@@ -7,6 +7,10 @@ kx reads each JavaScript file from a target and finds bug **classes**, not just 
 
 It's not another secret scanner. It builds a structural model of each JS bundle, schemas, mutations, network calls, session refs, sinks, taint paths, and reasons about whether the behaviour represents a real vulnerability. It works on production-minified code where every variable is a one-character alias, and it recovers original TypeScript sources from sourcemaps when they're shipped.
 
+![kx triage report](docs/triage_report.png)
+
+*Triage HTML output: 92 findings auto-classified into real / needs-verification / false-positive, each with an evidence chain and a concrete next action.*
+
 ---
 
 ## What it finds
@@ -60,6 +64,10 @@ Requirements: Python ≥3.10, Node.js ≥18 (for the AST worker), `pip` access.
 ---
 
 ## Usage
+
+![kx scan in progress](docs/terminal_scan.png)
+
+*kx running against a Vite + React target. Crawl resolves the chunk manifest, AST analyzer fires on each file, semantic detectors classify findings into real/verify/fp before the report lands.*
 
 ```bash
 # Basic scan
@@ -127,6 +135,10 @@ kx -u https://app.target.com \
 ---
 
 ## Output
+
+![kx scan complete](docs/scan_complete.png)
+
+*Scan summary: 14 JS files, 92 findings in 2.1s. Endpoints are grouped by surface (admin, auth/login, password/token, dangerous sinks) so you know which areas to attack first.*
 
 - **Terminal** - Severity-coloured table, then evidence panels for each high/critical semantic finding showing the schema field, refine rule, mutation payload, and origin chain that triggered it.
 - **JSON** - Full findings with `note` and `evidence` arrays preserved.
