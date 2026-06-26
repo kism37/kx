@@ -36,6 +36,9 @@ jobs:
           cd ast_worker
           npm install --silent
 
+      - name: Run detector fixtures
+        run: node ast_worker/test_detectors.js
+
       - name: Run e2e test
         run: python test_e2e_integration.py
 

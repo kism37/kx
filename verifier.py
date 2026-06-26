@@ -33,9 +33,137 @@ import httpx
 
 # Hard cap: this runs against a paid API, never silently blow up cost.
 MAX_FINDINGS_PER_RUN = 25
-ANTHROPIC_API = "https://api.anthropic.com/v1/messages"
-DEFAULT_MODEL = "claude-sonnet-4-5"   # current Claude Sonnet, can override
 MAX_TOKENS_OUT = 800
+
+# ── Provider registry ───────────────────────────────────────────────────────
+# kx verifies findings against *any* LLM, not just Anthropic. We support two
+# wire shapes:
+#   "anthropic" -> POST /v1/messages         (x-api-key, system+messages)
+#   "openai"    -> POST /v1/chat/completions (Bearer, messages[role=system,user])
+# The OpenAI-compatible shape covers OpenAI, OpenRouter, Groq, DeepSeek,
+# Mistral, Together, Gemini's compat endpoint, and local Ollama / LM Studio --
+# so "any API key" is really just these two adapters plus a base-URL override.
+#
+# Each entry: style, base_url (endpoint), default model, and the env vars to
+# search (in order) for a key.
+PROVIDERS = {
+    "anthropic":  {"style": "anthropic",
+                   "base_url": "https://api.anthropic.com/v1/messages",
+                   "model": "claude-sonnet-4-6",
+                   "envs": ["ANTHROPIC_API_KEY"]},
+    "openai":     {"style": "openai",
+                   "base_url": "https://api.openai.com/v1/chat/completions",
+                   "model": "gpt-4o-mini",
+                   "envs": ["OPENAI_API_KEY"]},
+    "openrouter": {"style": "openai",
+                   "base_url": "https://openrouter.ai/api/v1/chat/completions",
+                   "model": "anthropic/claude-3.5-sonnet",
+                   "envs": ["OPENROUTER_API_KEY"]},
+    "groq":       {"style": "openai",
+                   "base_url": "https://api.groq.com/openai/v1/chat/completions",
+                   "model": "llama-3.3-70b-versatile",
+                   "envs": ["GROQ_API_KEY"]},
+    "deepseek":   {"style": "openai",
+                   "base_url": "https://api.deepseek.com/v1/chat/completions",
+                   "model": "deepseek-chat",
+                   "envs": ["DEEPSEEK_API_KEY"]},
+    "gemini":     {"style": "openai",
+                   "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+                   "model": "gemini-2.0-flash",
+                   "envs": ["GEMINI_API_KEY", "GOOGLE_API_KEY"]},
+    "mistral":    {"style": "openai",
+                   "base_url": "https://api.mistral.ai/v1/chat/completions",
+                   "model": "mistral-large-latest",
+                   "envs": ["MISTRAL_API_KEY"]},
+    "together":   {"style": "openai",
+                   "base_url": "https://api.together.xyz/v1/chat/completions",
+                   "model": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+                   "envs": ["TOGETHER_API_KEY"]},
+}
+
+# Order in which "auto" detection probes env vars when no provider is named.
+AUTO_ORDER = ["anthropic", "openai", "openrouter", "groq",
+              "deepseek", "gemini", "mistral", "together"]
+
+# Generic env vars an openai-compatible / custom endpoint may use for its key.
+_GENERIC_KEY_ENVS = ["OPENAI_API_KEY", "LLM_API_KEY", "KX_VERIFY_API_KEY"]
+
+# Back-compat alias -- some callers/tests import these names directly.
+ANTHROPIC_API = PROVIDERS["anthropic"]["base_url"]
+DEFAULT_MODEL = PROVIDERS["anthropic"]["model"]
+
+
+@dataclass
+class VerifyConfig:
+    """Everything verify_finding needs to talk to one provider."""
+    provider: str
+    style: str       # "anthropic" | "openai"
+    api_key: str
+    base_url: str
+    model: str
+    key_env: str = ""
+
+
+def resolve_verify_config(provider: str | None = None, model: str | None = None,
+                          base_url: str | None = None,
+                          api_key: str | None = None) -> "VerifyConfig | None":
+    """
+    Resolve provider + key + base_url + model from explicit args and the
+    environment. Returns a VerifyConfig, or None if no usable API key is found.
+
+    provider:
+      - None / "auto"  -> probe AUTO_ORDER env vars, first key wins.
+      - a known name   -> use that provider's registry entry.
+      - "openai-compatible" / "custom" / unknown name + base_url -> generic
+        OpenAI-shaped endpoint at base_url (key from api_key or generic envs).
+    """
+    name = (provider or "auto").strip().lower()
+
+    def _generic(prov_label: str) -> "VerifyConfig | None":
+        key = api_key
+        env_used = ""
+        if not key:
+            for env in _GENERIC_KEY_ENVS:
+                if os.getenv(env):
+                    key, env_used = os.getenv(env), env
+                    break
+        if not key or not base_url:
+            return None
+        return VerifyConfig(prov_label, "openai", key, base_url,
+                            model or "gpt-4o-mini", env_used)
+
+    if name in ("openai-compatible", "compatible", "custom"):
+        return _generic("custom")
+
+    if name == "auto":
+        for cand in AUTO_ORDER:
+            for env in PROVIDERS[cand]["envs"]:
+                if os.getenv(env):
+                    name = cand
+                    break
+            if name != "auto":
+                break
+        if name == "auto":
+            # No known key. A bare --verify-base-url + generic key still works.
+            return _generic("custom")
+
+    spec = PROVIDERS.get(name)
+    if not spec:
+        # Unknown provider name: treat as openai-compatible if we have an endpoint.
+        return _generic(name)
+
+    key, key_env = api_key, ""
+    if not key:
+        for env in spec["envs"]:
+            if os.getenv(env):
+                key, key_env = os.getenv(env), env
+                break
+    if not key:
+        return None
+    return VerifyConfig(name, spec["style"], key,
+                        base_url or spec["base_url"],
+                        model or spec["model"],
+                        key_env or spec["envs"][0])
 
 
 SYSTEM_PROMPT = """You are a senior application security engineer reviewing
@@ -152,43 +280,81 @@ def _strip_json(text: str) -> str:
     return m.group(0) if m else text
 
 
+async def _call_anthropic(system: str, user_msg: str, config: "VerifyConfig",
+                          client: httpx.AsyncClient) -> str | None:
+    """Anthropic /v1/messages. Returns the assistant text or None."""
+    payload = {
+        "model": config.model,
+        "max_tokens": MAX_TOKENS_OUT,
+        "system": system,
+        "messages": [{"role": "user", "content": user_msg}],
+    }
+    headers = {
+        "x-api-key": config.api_key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+    r = await client.post(config.base_url, headers=headers,
+                          content=json.dumps(payload))
+    if r.status_code != 200:
+        return None
+    data = r.json()
+    parts = [b.get("text", "") for b in data.get("content", [])
+             if b.get("type") == "text"]
+    return "\n".join(parts).strip() or None
+
+
+async def _call_openai(system: str, user_msg: str, config: "VerifyConfig",
+                       client: httpx.AsyncClient) -> str | None:
+    """OpenAI-compatible /v1/chat/completions. Returns the message text or None."""
+    headers = {
+        "Authorization": f"Bearer {config.api_key}",
+        "content-type": "application/json",
+    }
+    body = {
+        "model": config.model,
+        "max_tokens": MAX_TOKENS_OUT,
+        "temperature": 0,
+        "messages": [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_msg},
+        ],
+    }
+    # Prefer enforced JSON output; retry without it if the provider rejects the
+    # field (some OpenAI-compatible backends 400 on response_format).
+    r = await client.post(config.base_url, headers=headers,
+                          content=json.dumps({**body, "response_format": {"type": "json_object"}}))
+    if r.status_code == 400:
+        r = await client.post(config.base_url, headers=headers,
+                              content=json.dumps(body))
+    if r.status_code != 200:
+        return None
+    try:
+        return (r.json()["choices"][0]["message"]["content"] or "").strip() or None
+    except (KeyError, IndexError, TypeError):
+        return None
+
+
 async def verify_finding(
     finding,
     source_for_finding: str,
     *,
-    api_key: str,
-    model: str = DEFAULT_MODEL,
+    config: "VerifyConfig",
     timeout: float = 30.0,
     client: httpx.AsyncClient | None = None,
 ) -> VerifierResult | None:
-    """Send one finding + code window to Claude. Returns parsed result or None."""
+    """Send one finding + code window to the configured LLM. Parsed result or None."""
     code_window = _code_window(source_for_finding, finding.line)
     user_msg = _build_user_message(finding, code_window)
-
-    payload = {
-        "model": model,
-        "max_tokens": MAX_TOKENS_OUT,
-        "system": SYSTEM_PROMPT,
-        "messages": [{"role": "user", "content": user_msg}],
-    }
-    headers = {
-        "x-api-key": api_key,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json",
-    }
 
     own_client = client is None
     if own_client:
         client = httpx.AsyncClient(timeout=timeout)
     try:
-        r = await client.post(ANTHROPIC_API, headers=headers,
-                              content=json.dumps(payload))
-        if r.status_code != 200:
-            return None
-        data = r.json()
-        text_parts = [b.get("text","") for b in data.get("content", [])
-                      if b.get("type") == "text"]
-        text = "\n".join(text_parts).strip()
+        if config.style == "anthropic":
+            text = await _call_anthropic(SYSTEM_PROMPT, user_msg, config, client)
+        else:
+            text = await _call_openai(SYSTEM_PROMPT, user_msg, config, client)
         if not text:
             return None
         try:
@@ -214,8 +380,7 @@ async def verify_findings(
     findings: list,
     sources_by_url: dict[str, str],
     *,
-    api_key: str | None = None,
-    model: str = DEFAULT_MODEL,
+    config: "VerifyConfig | None" = None,
     max_findings: int = MAX_FINDINGS_PER_RUN,
     concurrency: int = 3,
     progress_callback=None,
@@ -223,14 +388,15 @@ async def verify_findings(
     """
     Verify up to `max_findings` of the highest-priority semantic findings.
 
-    Returns a dict: {finding_id_str: VerifierResult.to_dict()}
-    Finding IDs are derived as f"{source_url}::{line}::{match}" for stable
-    matching back to the original findings.
+    `config` selects the provider/model/key (see resolve_verify_config). If
+    omitted, we auto-detect from the environment. Returns a dict:
+    {finding_id_str: VerifierResult.to_dict()} keyed by
+    f"{source_url}::{line}::{match}" for stable matching back to the findings.
     """
     import asyncio
 
-    key = api_key or os.getenv("ANTHROPIC_API_KEY")
-    if not key:
+    cfg = config or resolve_verify_config()
+    if cfg is None or not cfg.api_key:
         return {}
 
     # Only semantic findings, sorted by severity then confidence
@@ -254,9 +420,7 @@ async def verify_findings(
                 src = sources_by_url.get(f.source_url, "")
                 if progress_callback:
                     progress_callback(f.match)
-                res = await verify_finding(
-                    f, src, api_key=key, model=model, client=client
-                )
+                res = await verify_finding(f, src, config=cfg, client=client)
                 if res:
                     fid = f"{f.source_url}::{f.line}::{f.match}"
                     results[fid] = res.to_dict()

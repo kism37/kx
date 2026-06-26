@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from crawler import Crawler
 from extractor import extract, Finding
+import classifier
 from classifier import run_ast, classify
 from runtime import run_runtime, PLAYWRIGHT_AVAILABLE
 from differ import DiffEngine
@@ -214,6 +215,7 @@ async def main(args: argparse.Namespace):
 
     # ── 3. AST analysis ─────────────────────────────────────────────────
     if not args.no_ast:
+        classifier.DROPPED.clear()   # fresh coverage-gap registry for this run
         # AST is expensive (subprocess per file). Pick a smart subset:
         #   Tier 1: files static extraction already hit (most likely to yield)
         #   Tier 2: largest remaining files (most likely to contain logic)
@@ -248,6 +250,44 @@ async def main(args: argparse.Namespace):
         for batch in ast_results:
             all_findings.extend(batch)
 
+        # Surface files the AST worker dropped (timeout / invalid output). A
+        # silent skip would look identical to a clean file in the counts.
+        dropped = list(classifier.DROPPED)
+        if dropped:
+            print_warn(
+                f"{len(dropped)} file(s) NOT analyzed by AST (timeout/worker error) "
+                f"-- coverage gap",
+                phase="ast",
+            )
+            for d in dropped[:5]:
+                fname = d["url"].rsplit("/", 1)[-1] or d["url"]
+                print_neg(f"  · {fname} ({d.get('size', 0) // 1024} KB) -- {d['reason']}")
+            if len(dropped) > 5:
+                print_neg(f"  · … and {len(dropped) - 5} more")
+            # Persist as a single low-severity finding so JSON/HTML reports
+            # record the gap instead of hiding it.
+            all_findings.append(Finding(
+                source_url=args.url,
+                category="coverage_gap",
+                name=f"[COVERAGE] {len(dropped)} JS file(s) skipped during AST analysis",
+                severity="low",
+                context="coverage",
+                match=f"{len(dropped)} file(s) not analyzed",
+                line=0,
+                snippet="; ".join(
+                    f"{d['url'].rsplit('/', 1)[-1]} ({d['reason']})" for d in dropped[:8]
+                ),
+                confidence="pattern",
+                note=("These files were fetched but the AST worker returned no result "
+                      "(timeout or parse error), so their logic was NOT scanned. "
+                      "Re-run with a higher --ast-limit budget or inspect them manually."),
+                evidence=[{"kind": "skipped_file", "line": 0,
+                           "snippet": f"{d['url']} -- {d['reason']} ({d.get('size', 0) // 1024} KB)"}
+                          for d in dropped[:25]],
+                verdict="verify",
+                verdict_reason="coverage gap -- file not analyzed",
+            ))
+
     # ── 4. Classify + deduplicate ───────────────────────────────────────
     all_findings = classify(all_findings)
     print_ok(f"classified: {len(all_findings)} finding(s) after dedup", phase="semantic")
@@ -270,13 +310,23 @@ async def main(args: argparse.Namespace):
     # ── 4b. LLM verification (opt-in via --verify) ──────────────────────
     if args.verify:
         try:
-            from verifier import verify_findings, attach_verification_to_findings
+            from verifier import (verify_findings, attach_verification_to_findings,
+                                  resolve_verify_config)
         except ImportError:
             print_progress("⚠  Verifier module missing -- skipping verification")
         else:
-            import os as _os
-            if not _os.getenv("ANTHROPIC_API_KEY"):
-                print_progress("⚠  ANTHROPIC_API_KEY not set -- skipping --verify")
+            cfg = resolve_verify_config(
+                provider=args.verify_provider,
+                model=args.verify_model,
+                base_url=args.verify_base_url,
+            )
+            if cfg is None:
+                print_progress(
+                    "⚠  No LLM API key found for --verify -- skipping. Set one of "
+                    "ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY / "
+                    "GROQ_API_KEY / DEEPSEEK_API_KEY / GEMINI_API_KEY, or pass "
+                    "--verify-provider/--verify-base-url."
+                )
             else:
                 # Build source map for verifier code-window extraction
                 sources_by_url = {r.url: r.content for r in js_results}
@@ -285,12 +335,13 @@ async def main(args: argparse.Namespace):
                                    and f.severity in ("critical","high"))
                 cap = min(n_candidates, args.verify_max)
                 print_progress(
-                    f"LLM-verifying top {cap} semantic findings via Claude..."
+                    f"LLM-verifying top {cap} semantic findings via "
+                    f"{cfg.provider}:{cfg.model}..."
                 )
                 vresults = await verify_findings(
                     all_findings, sources_by_url,
+                    config=cfg,
                     max_findings=args.verify_max,
-                    model=args.verify_model,
                 )
                 attach_verification_to_findings(all_findings, vresults)
                 # Count outcomes
@@ -506,15 +557,29 @@ Examples:
     )
     parser.add_argument(
         "--verify", action="store_true",
-        help="Send top semantic findings to Claude for verification + PoC generation (requires ANTHROPIC_API_KEY)",
+        help="Send top semantic findings to an LLM for verification + PoC generation. "
+             "Provider auto-detected from whichever API key env var is set "
+             "(ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY, GROQ_API_KEY, "
+             "DEEPSEEK_API_KEY, GEMINI_API_KEY, MISTRAL_API_KEY, TOGETHER_API_KEY).",
     )
     parser.add_argument(
         "--verify-max", type=int, default=25,
         help="Max findings to LLM-verify per run (default: 25, hard cap on cost)",
     )
     parser.add_argument(
-        "--verify-model", default="claude-sonnet-4-5",
-        help="Anthropic model name for verification (default: claude-sonnet-4-5)",
+        "--verify-provider", default="auto",
+        help="LLM provider for --verify: auto (default) | anthropic | openai | "
+             "openrouter | groq | deepseek | gemini | mistral | together | "
+             "custom (with --verify-base-url for any OpenAI-compatible endpoint).",
+    )
+    parser.add_argument(
+        "--verify-model", default=None,
+        help="Model name for verification (default: the chosen provider's default).",
+    )
+    parser.add_argument(
+        "--verify-base-url", default=None,
+        help="OpenAI-compatible chat-completions URL for a custom/self-hosted "
+             "endpoint (e.g. http://localhost:11434/v1/chat/completions for Ollama).",
     )
 
     # Diff mode

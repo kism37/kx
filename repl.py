@@ -17,7 +17,7 @@ Commands:
     triage <id> hit    mark finding as confirmed hit
     triaged            list all triage marks
     open <id>          open the source file in $EDITOR at the finding's line
-    poc <id>           ask Claude to generate a PoC (needs ANTHROPIC_API_KEY)
+    poc <id>           ask an LLM to generate a PoC (needs an API key: ANTHROPIC/OPENAI/...)
     export [path]      export current view to JSON
     stats              show counts by severity / category
     help, ?            this help
@@ -203,7 +203,7 @@ class kxRepl:
             ("",                   ""),
             ("open <id>",          "open file in $EDITOR at finding's line"),
             ("curl <id>",          "generate curl command to test the endpoint (-X / -H / --auth / --proxy)"),
-            ("poc <id>",           "generate PoC via Claude (needs ANTHROPIC_API_KEY)"),
+            ("poc <id>",           "generate PoC via an LLM (needs an API key)"),
             ("",                   ""),
             ("history",            "show prior scans of this target from the diff DB"),
             ("stats",              "counts by severity / category"),
@@ -381,23 +381,24 @@ class kxRepl:
         if fid not in range(len(self.findings)):
             self._err(f"no finding with id #{fid}")
             return
-        if not os.getenv("ANTHROPIC_API_KEY"):
-            self._err("ANTHROPIC_API_KEY not set")
-            return
         f = self.findings[fid]
-        # Use verifier module to ask Claude
+        # Use verifier module to ask the configured LLM (any provider).
         try:
             import asyncio
-            from verifier import verify_finding
+            from verifier import verify_finding, resolve_verify_config
         except ImportError:
             self._err("verifier module unavailable")
             return
-        self._info(f"asking claude to verify and write PoC for [bright_white]#{fid}[/]...")
+        cfg = resolve_verify_config()
+        if cfg is None:
+            self._err("no LLM API key set (ANTHROPIC_API_KEY / OPENAI_API_KEY / "
+                      "OPENROUTER_API_KEY / GROQ_API_KEY / DEEPSEEK_API_KEY / ...)")
+            return
+        self._info(f"asking {cfg.provider}:{cfg.model} to verify and write PoC for "
+                   f"[bright_white]#{fid}[/]...")
         source = self._url_to_content.get(f.source_url, "")
         try:
-            res = asyncio.run(verify_finding(
-                f, source, api_key=os.getenv("ANTHROPIC_API_KEY")
-            ))
+            res = asyncio.run(verify_finding(f, source, config=cfg))
         except Exception as e:
             self._err(f"verifier failed: {e}")
             return

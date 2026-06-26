@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **`--verify` works with any LLM provider, not just Anthropic.** The provider
+  is auto-detected from whichever API-key env var is set (`ANTHROPIC_API_KEY`,
+  `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY`,
+  `GEMINI_API_KEY`, `MISTRAL_API_KEY`, `TOGETHER_API_KEY`). New flags:
+  `--verify-provider`, `--verify-base-url` (any OpenAI-compatible endpoint,
+  incl. local Ollama / LM Studio). `--verify-model` now defaults to the chosen
+  provider's default. The REPL `poc` command routes through the same layer.
+
+### Changed
+- Default Anthropic verify model bumped `claude-sonnet-4-5` -> `claude-sonnet-4-6`.
+
 ## 2.0.0 -- Semantic analysis release
 
 This release moves kx from "pattern matcher" to "semantic reader". The

@@ -997,6 +997,34 @@ function buildModel(ast, source) {
     },
   });
 
+  // ── pass 7: rest-omission capture ──
+  // const { authCode, captcha, ...rest } = values;  -> `rest` deliberately
+  // omits authCode & captcha. If `rest` is later spread into a payload, those
+  // fields are provably NOT transmitted. This is the strongest possible signal
+  // for client-only validation (server never sees the field) AND a privilege-
+  // escalation *de-escalator* (an omitted permission field can't be set by the
+  // client through that payload). Captured here so detectors can reason about it.
+  const restOmissions = {};   // restVarName -> { omitted: Set<string>, fromVar }
+  walk.simple(ast, {
+    VariableDeclarator(node) {
+      if (node.id?.type !== "ObjectPattern") return;
+      const rest = node.id.properties.find(p => p.type === "RestElement");
+      if (!rest || rest.argument?.type !== "Identifier") return;
+      const omitted = new Set();
+      for (const p of node.id.properties) {
+        if (p.type !== "Property") continue;
+        const k = p.key?.type === "Identifier" ? p.key.name
+                : p.key?.type === "Literal" ? String(p.key.value) : null;
+        if (k) omitted.add(k);
+      }
+      const fromVar = node.init?.type === "Identifier" ? node.init.name : null;
+      const prev = restOmissions[rest.argument.name];
+      if (prev) for (const k of omitted) prev.omitted.add(k);
+      else restOmissions[rest.argument.name] = { omitted, fromVar };
+    },
+  });
+  model.restOmissions = restOmissions;
+
   model.propOriginByLocal = propOriginByLocal;
   model.localOrigins = localOrigins;
   return model;

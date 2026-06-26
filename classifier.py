@@ -34,6 +34,16 @@ def _ast_severity_map(sev: str) -> str:
 # Lives at module scope so other modules (file_reports.py) can consult it.
 SUMMARIES: dict[str, dict] = {}
 
+# Files the AST worker could NOT analyze (timeout / crash / invalid output).
+# A silent `return []` on these paths is indistinguishable from "clean file",
+# so we record the drop here and the orchestrator surfaces it as a coverage
+# gap. Each entry: {"url", "reason", "size"}.
+DROPPED: list[dict] = []
+
+# Wall-clock budget per file for the AST subprocess. Large minified bundles
+# occasionally blow this; when they do we record a drop rather than hide it.
+AST_TIMEOUT = 30
+
 
 async def run_ast(source_url: str, js_content: str) -> list[Finding]:
     """
@@ -56,16 +66,35 @@ async def run_ast(source_url: str, js_content: str) -> list[Finding]:
         )
         stdout, stderr = await asyncio.wait_for(
             proc.communicate(input=js_content.encode("utf-8", errors="replace")),
-            timeout=30,
+            timeout=AST_TIMEOUT,
         )
     except asyncio.TimeoutError:
+        # Big minified bundles can exceed the budget. Record the drop so the
+        # operator knows this file was NOT analyzed -- a silent [] here looks
+        # identical to a clean file. Kill the orphaned subprocess too.
+        DROPPED.append({"url": source_url,
+                        "reason": f"AST timeout (>{AST_TIMEOUT}s)",
+                        "size": len(js_content)})
+        try:
+            proc.kill()
+        except (ProcessLookupError, UnboundLocalError):
+            pass
         return []
     except FileNotFoundError:
+        DROPPED.append({"url": source_url,
+                        "reason": "node not found (AST worker could not run)",
+                        "size": len(js_content)})
         return []
 
     try:
         raw = json.loads(stdout.decode("utf-8", errors="replace"))
     except json.JSONDecodeError:
+        err = (stderr.decode("utf-8", errors="replace") or "").strip()
+        last = err.splitlines()[-1][:160] if err else ""
+        DROPPED.append({"url": source_url,
+                        "reason": "AST worker emitted invalid output"
+                                  + (f": {last}" if last else ""),
+                        "size": len(js_content)})
         return []
 
     # Support both envelope shapes:

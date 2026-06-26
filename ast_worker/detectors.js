@@ -85,9 +85,47 @@ const URL_FIELD_RE = /(url|uri|endpoint|webhook|callback|redirect|address|hostna
 // at least one earlier hint:
 const URL_FIELD_CONFIRM_RE = /(url|uri|webhook|callback|notification|redirect|notify|forward|endpoint|ping|hook)/i;
 
-const ID_FIELD_RE         = /^(merchant|user|account|org|organization|tenant|customer|owner|team|workspace|project|store|shop|business|company|subscription|invoice|order|payment|client|partner)?id$|id$/i;
-const STRICT_ID_FIELD_RE  = /^(merchant|user|account|org|organization|tenant|customer|store|shop|business|company|subscription|owner|team|workspace|project|client|partner)?(id)$/i;
-const PERMISSION_FIELD_RE = /^(role|isadmin|permission|permissions|whocanchange|accesslevel|usertype|tier|scope|grant|privilege|capability|admin|superuser|owner)$|^can[A-Z]/i;
+// ── ID-field detection ──────────────────────────────────────────────────────
+// A key is "ID-like" only if it ends in a *boundaried* id: exact `id`,
+// camelCase `...Id`, ALLCAPS `...ID`, or snake_case `..._id`. The boundary is
+// the whole point -- the old `id$/i` matched any lowercase word ending in
+// "id" (valid, paid, uuid, android, hybrid, grid, void, kid, candid) and fired
+// a stream of bogus IDOR findings. We test case-SENSITIVELY so those lowercase
+// words fall through, and keep an explicit excludelist for the ALLCAPS/camel
+// collisions the boundary alone can't separate (UUID, GUID, VOID, GRID...).
+const ID_SUFFIX_RE = /(^id$|Id$|ID$|_id$)/;
+const ID_FALSE_WORDS = new Set([
+  "valid", "invalid", "uuid", "guid", "void", "avoid", "ovoid", "paid",
+  "unpaid", "overpaid", "android", "hybrid", "grid", "kid", "candid", "rapid",
+  "solid", "fluid", "squid", "rigid", "vivid", "lucid", "acid", "humid",
+  "timid", "bid", "rid", "lid", "mid", "did", "hid", "aid", "raid", "maid",
+  "braid", "afraid", "forbid", "amid", "morbid", "placid",
+]);
+const ID_ENTITY_RE = /^(merchant|user|account|org|organization|tenant|customer|owner|team|workspace|project|store|shop|business|company|subscription|invoice|order|payment|client|partner|profile|seller|buyer|member|group)/i;
+
+function looksLikeId(key) {
+  if (!key || ID_FALSE_WORDS.has(key.toLowerCase())) return false;
+  return ID_SUFFIX_RE.test(key);
+}
+// Entity-scoped IDs (merchantId, userID, account_id) -- the high-confidence
+// horizontal-privesc set. Equivalent to the old STRICT_ID_FIELD_RE intent.
+function looksLikeEntityId(key) {
+  return looksLikeId(key) && ID_ENTITY_RE.test(key);
+}
+
+// ── Permission-field detection ──────────────────────────────────────────────
+// Anchored word list (case-insensitive) PLUS a curated set of privilege-bearing
+// `can<Verb>` flags. The old `^can[A-Z]/i` matched ANY letter after "can"
+// because the /i flag makes [A-Z] case-insensitive -- so cancel, canvas,
+// candidate, cannot all read as privilege escalation. We list real privilege
+// verbs explicitly and match them case-sensitively (camelCase boundary).
+const PERMISSION_WORD_RE = /^(role|roles|isadmin|is_admin|permission|permissions|whocanchange|who_can_change|accesslevel|access_level|usertype|user_type|tier|privilege|privileges|capability|capabilities|superuser|is_superuser|issuperuser|superadmin|admin|owner)$/i;
+const PERMISSION_CAN_RE  = /^can(Change|Delete|Manage|Edit|Grant|Assign|Approve|Publish|Configure|Override|Impersonate|Administer|Modify|Remove|Invite|Promote|Revoke|Escalate)/;
+
+function looksLikePermission(key) {
+  return !!key && (PERMISSION_WORD_RE.test(key) || PERMISSION_CAN_RE.test(key));
+}
+
 const SAFE_URL_VALIDATORS = /(new\s+URL\s*\(|isURL|validUrl|whitelist|allowlist|startsWith\(["']https|hostname\s*===\s*["'])/i;
 
 // User-controllable inputs for taint
@@ -128,6 +166,15 @@ function detectClientOnlyValidation(model, source) {
 
     const formHasSpread = spreadRoots.size > 0;
 
+    // Fields provably stripped before a spread: `const { authCode, ...rest } = values`
+    // where `rest` is what gets spread into the payload. Those keys never reach
+    // the backend -- the strongest possible client-only-validation signal.
+    const omittedViaSpread = new Set();
+    for (const root of spreadRoots) {
+      const ro = (model.restOmissions || {})[root];
+      if (ro) for (const k of ro.omitted) omittedViaSpread.add(k);
+    }
+
     // For each top-level schema field, check whether it survives to a payload.
     // We only check the immediate top-level field name (e.g. "authCode"),
     // because nested fields are usually transmitted via spread.
@@ -139,52 +186,76 @@ function detectClientOnlyValidation(model, source) {
       // Skip obviously cosmetic schema parts
       if (/^(label|value|children)$/i.test(fname)) continue;
 
-      // Has the field been excluded from spread payload by destructuring/omit?
-      // Heuristic: spread is over the *form values* object -- most fields go
-      // through. Only flag a field if it has BOTH: a refine() rule referencing
-      // it AND it appears in NO transmitted-keys set AND it has security
-      // semantics (auth/code/token/otp/pin/captcha/...).
       const hasRefine = (schema.refines || []).some(r => r?.path === fname);
       const looksSecurity = /^(auth|otp|pin|code|captcha|token|2fa|mfa|tfa|confirm|reauth).*$|.*(otp|2fa|mfa|pin|password|captcha)$/i.test(fname);
 
       if (!hasRefine && !looksSecurity) continue;
 
-      const explicitlySent = transmittedKeys.has(fname);
+      // Disposition of this field relative to the outgoing payload:
+      //   explicit      -> sent as its own key: server sees it, no bypass.   (skip)
+      //   omitted       -> destructured out before a spread: server NEVER sees it. (critical)
+      //   spread_likely -> a spread is present and the field isn't omitted:
+      //                    probably transmitted, but .refine() still runs only
+      //                    client-side -- worth a *medium* "verify server" note.
+      //   absent        -> no spread, not an explicit key: payload omits it.  (critical)
+      if (transmittedKeys.has(fname)) continue;            // explicit -> not a bypass
 
-      // If a spread is used, the field MIGHT be sent. But if it's listed
-      // as schema-optional AND has a refine() AND we have evidence the
-      // spread comes from form values that include it, it's still suspicious.
-      // We always flag with reduced confidence when a spread is present.
-      if (explicitlySent) continue;
+      const disposition =
+        omittedViaSpread.has(fname) ? "omitted" :
+        formHasSpread               ? "spread_likely" :
+                                      "absent";
+
+      // spread_likely is the weak case: the value is probably sent, so only
+      // surface it when there's an actual .refine() rule the server might skip.
+      // A merely security-shaped name here is too noisy to flag.
+      if (disposition === "spread_likely" && !hasRefine) continue;
 
       const refineEvidence = (schema.refines || []).find(r => r?.path === fname);
+      const omitFrom = disposition === "omitted"
+        ? (Object.entries(model.restOmissions || {})
+             .find(([, v]) => v.omitted.has(fname))?.[0] || "rest")
+        : null;
+
+      const severity = disposition === "spread_likely" ? "medium" : "critical";
+
+      const verdictText =
+        disposition === "omitted"
+          ? `field destructured out (\`{ ${fname}, ...${omitFrom} }\`) before the spread -- server never receives it`
+          : disposition === "spread_likely"
+            ? "field likely transmitted via spread, but the .refine() rule runs only client-side"
+            : "field NOT in payload -- server never sees it";
+
+      const note =
+        disposition === "omitted"
+          ? `Field "${fname}" is validated client-side${hasRefine ? " via .refine()" : ""} but is explicitly destructured out (\`const { ${fname}, ...${omitFrom} } = ...\`) before the payload is spread to the backend. The server never receives it, so the client check is the *only* gate -- skip the UI and call the endpoint directly.`
+          : disposition === "spread_likely"
+            ? `Field "${fname}" is enforced via .refine()${refineEvidence ? ` (line ${refineEvidence.line}): "${refineEvidence.message || "<no message>"}"` : ""}. The value is likely transmitted via a spread payload, but the refine() constraint runs only in the browser -- verify the server re-enforces it.`
+            : refineEvidence
+              ? `Field "${fname}" enforced only via .refine() (line ${refineEvidence.line}): "${refineEvidence.message || "<no message>"}" -- the mutation payload omits it entirely, so the server never sees it.`
+              : `Sensitive-looking field "${fname}" is in the schema but never appears in any mutation payload.`;
 
       findings.push({
         category: "auth_bypass",
         name: "Client-side-only validation (likely bypass)",
-        severity: formHasSpread ? "high" : "critical",
+        severity,
         value: fname,
         line: field.line,
-        note: refineEvidence
-          ? `Field "${fname}" enforced only via .refine() (line ${refineEvidence.line}): "${refineEvidence.message || "<no message>"}" -- not present as an explicit key in any mutation payload in this file. ${formHasSpread ? "Spread payload may transmit it, but the server-side check still cannot rely on this." : "Mutation payload omits it entirely."}`
-          : `Sensitive-looking field "${fname}" is in the schema but never appears as an explicit key in any mutation payload.`,
+        note,
         evidence: [
           { kind: "schema_field", line: field.line, snippet: `${fname}: <validator>` },
           refineEvidence && {
             kind: "refine_rule", line: refineEvidence.line,
             snippet: `.refine() on ${fname}: "${refineEvidence.message || "<no message>"}"`,
           },
+          omitFrom && {
+            kind: "destructure_omit", line: field.line,
+            snippet: `const { ${fname}, ...${omitFrom} } = <form values> -- ${fname} stripped before spread`,
+          },
           { kind: "transmitted_keys",
             line: model.mutations[0]?.payloads[0]?.line || 0,
             snippet: `payload keys: {${[...transmittedKeys].join(", ") || "(none)"}}`
                    + (spreadRoots.size ? `, spreads: {...${[...spreadRoots].join(", ...")}}` : "") },
-          {  kind: "verdict",
-             line: field.line,
-             snippet: explicitlySent
-                ? "field IS transmitted explicitly -- not a bypass"
-                : (formHasSpread
-                    ? "field may be in spread, but server-side check can be bypassed"
-                    : "field NOT in payload -- server never sees it") },
+          { kind: "verdict", line: field.line, snippet: verdictText },
         ].filter(Boolean),
       });
     }
@@ -208,9 +279,9 @@ function detectIdInMutation(model, source) {
       for (const f of payload.fieldsResolved) {
         if (f.key === "...") continue;
         // Strict match first -- "merchantID", "userId", etc.
-        const isStrict = STRICT_ID_FIELD_RE.test(f.key);
-        // Loose match -- anything ending in "id"
-        const isLoose = !isStrict && ID_FIELD_RE.test(f.key);
+        const isStrict = looksLikeEntityId(f.key);
+        // Loose match -- any boundaried id ("orderId", "fooId")
+        const isLoose = !isStrict && looksLikeId(f.key);
         if (!isStrict && !isLoose) continue;
 
         // Skip if value originates from a session var
@@ -346,7 +417,7 @@ function detectClientControlledPermission(model, source) {
       // the form schema. That's too noisy → only do it for explicit keys here.
 
       for (const key of explicitKeys) {
-        if (!PERMISSION_FIELD_RE.test(key)) continue;
+        if (!looksLikePermission(key)) continue;
         // Find the resolved-field entry so we can describe its origin
         const fr = (payload.fieldsResolved || []).find(x => x.key === key);
         findings.push({
@@ -369,6 +440,14 @@ function detectClientControlledPermission(model, source) {
       // Also walk schema fields if this mutation looks linked to a form.
       // (Spread case -- server probably receives the whole form payload.)
       if (payload.spreads.length) {
+        // A permission field destructured out before the spread (`const
+        // { role, ...rest } = values; mut({...rest})`) is NOT attacker-
+        // controllable through this payload -- de-escalate by skipping it.
+        const omittedHere = new Set();
+        for (const root of payload.spreads) {
+          const ro = (model.restOmissions || {})[root];
+          if (ro) for (const k of ro.omitted) omittedHere.add(k);
+        }
         for (const form of model.forms) {
           const schema = form.resolverSchema ? model.schemas[form.resolverSchema] : null;
           if (!schema) continue;
@@ -376,7 +455,8 @@ function detectClientControlledPermission(model, source) {
           const spreadName = payload.spreads[0];
           for (const f of schema.fields) {
             const last = f.path.split(".").pop();
-            if (!PERMISSION_FIELD_RE.test(last)) continue;
+            if (!looksLikePermission(last)) continue;
+            if (omittedHere.has(last) || omittedHere.has(f.path)) continue;
             findings.push({
               category: "privilege_escalation",
               name: "Permission/role field in form schema reaches backend via spread",
@@ -483,7 +563,7 @@ function detectRawNetworkCalls(model, source, taintedVars) {
       }
 
       // (b) Permission/role field
-      if (PERMISSION_FIELD_RE.test(last)) {
+      if (looksLikePermission(last)) {
         findings.push({
           category: "privilege_escalation",
           name: "Permission/role field in raw network-call body",
@@ -503,7 +583,7 @@ function detectRawNetworkCalls(model, source, taintedVars) {
       // legitimately come from app state). For raw calls we don't have field
       // origin metadata, so we check whether ANY tainted variable's name
       // matches the body key.
-      if (STRICT_ID_FIELD_RE.test(last) && taintedVars && taintedVars.has(last)) {
+      if (looksLikeEntityId(last) && taintedVars && taintedVars.has(last)) {
         findings.push({
           category: "idor",
           name: "Tainted ID in raw network-call body",
@@ -570,4 +650,6 @@ module.exports = {
   detectClientControlledPermission,
   detectInterproceduralTaint,
   detectRawNetworkCalls,
+  // exported for unit tests
+  _matchers: { looksLikeId, looksLikeEntityId, looksLikePermission },
 };
