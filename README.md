@@ -3,9 +3,9 @@
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![python](https://img.shields.io/badge/python-3.10+-blue)
 
-kx reads each JavaScript file from a target and finds bug **classes**, not just patterns.
+kx maps a target's entire JavaScript attack surface -- including the lazy-loaded chunks and recovered sources most recon never sees -- then reads it for bug **classes**, not just patterns.
 
-It's not another secret scanner. It builds a structural model of each JS bundle, schemas, mutations, network calls, session refs, sinks, taint paths, and reasons about whether the behaviour represents a real vulnerability. It works on production-minified code where every variable is a one-character alias, and it recovers original TypeScript sources from sourcemaps when they're shipped.
+Most JS recon (jsluice, LinkFinder, SecretFinder) pulls endpoints and secrets out of the scripts a page links to. kx goes further: it parses the bundler's chunk manifest and force-loads every lazy route, reconstructs original TypeScript from sourcemaps, then builds a structural model of each file -- schemas, mutations, network calls, session refs, sinks, taint paths -- and reasons about whether the behaviour represents a real vulnerability. It works on production-minified code where every variable is a one-character alias.
 
 ![kx triage report](docs/triage_report.png)
 
@@ -37,9 +37,37 @@ Production bundles strip everything. kx doesn't grep for `"useForm"`, it identif
 - **Chunk-manifest resolution.** kx parses Vite, Webpack, Rollup, and Next.js entry bundles for their chunk maps and force-fetches every lazy-loaded route. The admin panel chunk that only loads when you click "Settings -> Account", kx pulls it on first scan.
 - **Source-map recovery.** Every `.js.map` is fetched, parsed, and original TypeScript sources are reconstructed and re-scanned. Third-party noise (react, lodash, polyfills) is filtered. Findings on recovered files are tagged `[src] path/to/Original.ts`.
 
-### Optional LLM verification
+### Optional LLM verification (any provider)
 
-Pass `--verify` and the top semantic findings go to Claude with their evidence chain and a code window. Claude returns a verdict (`exploitable` / `false_positive` / `needs_testing`), a concrete PoC HTTP request, prerequisites, and chaining notes. Requires `ANTHROPIC_API_KEY`. Capped at 25 findings per run.
+Pass `--verify` and the top semantic findings go to an LLM with their evidence chain and a code window. The model returns a verdict (`exploitable` / `false_positive` / `needs_testing`), a concrete PoC HTTP request, prerequisites, and chaining notes. Capped at 25 findings per run.
+
+**Bring your own key, any provider.** kx auto-detects the provider from whichever API-key env var is set:
+
+| Provider | Env var | Default model |
+|----------|---------|---------------|
+| Anthropic | `ANTHROPIC_API_KEY` | `claude-sonnet-4-6` |
+| OpenAI | `OPENAI_API_KEY` | `gpt-4o-mini` |
+| OpenRouter | `OPENROUTER_API_KEY` | `anthropic/claude-3.5-sonnet` |
+| Groq | `GROQ_API_KEY` | `llama-3.3-70b-versatile` |
+| DeepSeek | `DEEPSEEK_API_KEY` | `deepseek-chat` |
+| Gemini | `GEMINI_API_KEY` | `gemini-2.0-flash` |
+| Mistral | `MISTRAL_API_KEY` | `mistral-large-latest` |
+| Together | `TOGETHER_API_KEY` | `meta-llama/Llama-3.3-70B-Instruct-Turbo` |
+
+Pick explicitly with `--verify-provider`, override the model with `--verify-model`, and point at any OpenAI-compatible endpoint (incl. local Ollama / LM Studio) with `--verify-base-url`:
+
+```bash
+# Auto: uses whichever key is in your environment
+export OPENAI_API_KEY=sk-...
+kx -u https://target.com --verify
+
+# Explicit provider + model
+kx -u https://target.com --verify --verify-provider groq --verify-model llama-3.1-8b-instant
+
+# Local Ollama (no key needed; OpenAI-compatible)
+kx -u https://target.com --verify --verify-provider custom \
+   --verify-base-url http://localhost:11434/v1/chat/completions --verify-model llama3.1
+```
 
 ---
 
@@ -122,9 +150,11 @@ kx -u https://app.target.com \
 | `--runtime` | off | Playwright runtime hooks (fetch, XHR, WebSocket) |
 | `--no-headless` | off | Show browser (debug) |
 | `--wait-ms` | 5000 | Runtime page wait |
-| `--verify` | off | LLM verify top findings (needs `ANTHROPIC_API_KEY`) |
+| `--verify` | off | LLM verify top findings (needs any provider API key, see below) |
 | `--verify-max` | 25 | Hard cap on LLM-verified findings per run |
-| `--verify-model` | `claude-sonnet-4-5` | Anthropic model name |
+| `--verify-provider` | `auto` | `auto` / `anthropic` / `openai` / `openrouter` / `groq` / `deepseek` / `gemini` / `mistral` / `together` / `custom` |
+| `--verify-model` | provider default | Model name (overrides the provider's default) |
+| `--verify-base-url` | - | OpenAI-compatible endpoint for `custom` provider (e.g. local Ollama) |
 | `--diff` | off | Diff vs last scan, highlight new findings |
 | `--db` | `~/.kx/state.db` | SQLite state DB |
 | `-o`, `--output` | auto-named | JSON report path |
